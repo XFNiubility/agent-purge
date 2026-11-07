@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
+<meta name="ap-server-gen" content="">
 <title>agent-purge · 提示词控制台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232459cf'/%3E%3Cpath d='m8 23 8-15 8 15M11 18h10' fill='none' stroke='white' stroke-width='2.5'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
@@ -22,7 +23,7 @@
 <div class="sidebar-foot"><span class="dot"></span> 本地配置 · 127.0.0.1<small>变更保存在这台电脑</small></div>
 </aside>
 <div class="workspace">
-<header class="topbar"><span id="connection">正在连接本地服务…</span><div class="topbar-actions"><button type="button" id="version-badge" class="badge" title="检查 GitHub Release 更新">版本加载中</button><button id="refresh" class="quiet">刷新状态</button></div></header>
+<header class="topbar"><span id="connection">正在连接本地服务…</span><div class="topbar-actions"><button type="button" id="version-badge" class="badge" title="检查 GitHub Release 更新">版本加载中</button><button id="refresh" class="quiet">刷新状态</button><button type="button" id="exit-btn" class="quiet danger" title="退出 agent-purge 本地服务并关闭窗口">退出程序</button></div></header>
 <main id="main" tabindex="-1">
 <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 <section id="page-console" class="page" aria-labelledby="console-title">
@@ -60,6 +61,35 @@
 </div>
 <div class="dialog-footer"><button type="button" id="cancel-import" class="quiet">取消</button><button type="submit" id="start-import" class="primary">开始拉取</button></div>
 </form></dialog>
+<dialog id="update-dialog" class="modal-dialog">
+<div class="dialog-header"><h2 id="update-dialog-title">发现新版本</h2><button type="button" id="close-update" class="quiet close-btn" aria-label="关闭">✕</button></div>
+<p class="help dialog-desc" id="update-dialog-desc">检查到最新版本发布，支持一键就地升级。</p>
+<div class="dialog-body">
+<div class="update-version-row">
+<span class="badge" id="update-current-tag">当前: v0.0.0</span>
+<span class="update-arrow">→</span>
+<span class="badge good" id="update-latest-tag">最新: v0.0.0</span>
+<span class="muted update-source-label" id="update-source-label">npm / GitHub</span>
+</div>
+<div id="update-changelog-box" class="update-changelog-box">
+<div class="update-changelog-header">更新说明</div>
+<div id="update-changelog-text" class="update-changelog-text"></div>
+</div>
+<div id="update-command-box" class="update-command-box">
+<div class="update-command-label">终端升级命令</div>
+<div class="update-command-row">
+<code id="update-command-text">npm install -g agent-purge@latest</code>
+<button type="button" id="copy-update-command" class="secondary" title="复制升级命令">复制</button>
+</div>
+</div>
+<div id="update-status" class="import-status" hidden></div>
+</div>
+<div class="dialog-footer">
+<button type="button" id="dismiss-update" class="quiet">稍后</button>
+<a id="update-github-link" href="https://github.com/ZiChuanLan/agent-purge/releases/latest" target="_blank" rel="noopener noreferrer" class="button secondary">Release 页面</a>
+<button type="button" id="btn-do-upgrade" class="primary">一键升级</button>
+</div>
+</dialog>
 <div class="library-layout"><aside class="panel persona-sidebar"><label class="sr-only" for="persona-search">搜索人设</label><input id="persona-search" type="search" placeholder="搜索名称或说明"><div id="persona-list"></div></aside>
 <section class="panel editor-panel"><div id="editor-empty" class="empty">选择一份人设，查看或编辑正文。</div><form id="editor-form" hidden>
 <div class="section-heading"><h2 id="editor-title">编辑人设</h2><span id="editor-status" class="muted">未修改</span></div>

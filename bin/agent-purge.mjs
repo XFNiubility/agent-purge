@@ -48,7 +48,7 @@ if (recovered > 0) console.log(`[restore] 回滚了 ${recovered} 个上次残留
 if (argv[0] === "--serve") {
 	const port = argv[1] === undefined ? 7788 : Number(argv[1]);
 	if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("端口必须为 0..65535 的整数");
-	serveWeb(port);
+	serveWeb(port, { autoExit: argv.includes("--auto-exit") });
 	await new Promise(() => {});
 }
 const flag = (name, fallback) => {
@@ -62,7 +62,7 @@ let cmd = argv[0];
 
 // 便携版 exe 双击无参数启动时，默认直接打开原生桌面窗口应用
 if (!cmd && isCompiled()) {
-	await webCmd();
+	await webCmd({ autoExit: !argv.includes("--no-auto-exit") });
 	// 挂住事件循环
 	await new Promise(() => {});
 }
@@ -701,18 +701,37 @@ async function lsCmd() {
 	console.log(`\n* = active（agent-purge use <id> 切换）`);
 }
 
-async function webCmd() {
+async function webCmd(options = {}) {
 	const port = Number(flag("--port", "7788"));
 	if (!Number.isInteger(port) || port < 0 || port > 65535) die("端口必须为 0..65535 的整数");
 	const noOpen = argv.includes("--no-open");
+	const autoExit = options.autoExit ?? (argv.includes("--auto-exit") || (isCompiled() && !argv.includes("--no-auto-exit")));
 	const url = `http://127.0.0.1:${port}`;
 	const { openAppWindow } = await import("../lib/window.mjs");
+	const probeAlive = async () => {
+		try {
+			const res = await fetch(`${url}/api/state`, { signal: AbortSignal.timeout(1500) });
+			if (!res.ok) return false;
+			const data = await res.json().catch(() => null);
+			return Boolean(data && typeof data === "object" && ("version" in data || "personas" in data));
+		} catch { return false; }
+	};
 
 	// --detach：脱离当前终端后台存活，日志丢弃
 	if (argv.includes("--detach")) {
 		if (port === 0) die("--detach 需要明确端口；随机端口请用前台 web --port 0 --no-open");
+		if (await probeAlive()) {
+			console.log(`agent-purge 后台服务已在运行 → ${url}`);
+			if (!noOpen) {
+				const res = openAppWindow(url);
+				if (res.mode === "app") console.log(`已启动独立桌面窗口（${res.browser}）`);
+			}
+			process.exit(0);
+		}
 		// 源码态 execPath 是 node，得连脚本路径一起给；编译态 execPath 就是 exe 本体
-		const serve = isCompiled() ? ["--serve", String(port)] : [join(ROOT, "web", "server.mjs"), "--serve", String(port)];
+		const serveArgs = ["--serve", String(port)];
+		if (autoExit) serveArgs.push("--auto-exit");
+		const serve = isCompiled() ? serveArgs : [join(ROOT, "web", "server.mjs"), ...serveArgs];
 		const child = spawn(process.execPath, serve, {
 			detached: true,
 			stdio: "ignore",
@@ -729,7 +748,28 @@ async function webCmd() {
 		process.exit(0);
 	}
 
-	const server = serveWeb(port);
+	const onServerError = async (e) => {
+		// 端口被占时（如桌面启动器二次双击、老实例未退出）：先探测是否正是活着的 agent-purge
+		if (e.code === "EADDRINUSE") {
+			if (await probeAlive()) {
+				if (!noOpen) {
+					const res = openAppWindow(url);
+					if (res.mode === "app") console.log(`✓ 发现已在运行的 agent-purge 服务，已作为独立桌面窗口打开（${res.browser}）`);
+					else console.log(`✓ 发现已在运行的 agent-purge 服务，已在浏览器中打开：${url}`);
+				} else {
+					console.log(`agent-purge 服务已在 ${url} 运行`);
+				}
+				process.exit(0);
+			}
+			console.error(`${port} 已被占用且未响应 agent-purge 请求：可能是老实例卡死或其他程序占用。`);
+			console.error(`清掉再启：Get-NetTCPConnection -LocalPort ${port} -State Listen | % { Stop-Process -Id $_.OwningProcess -Force }`);
+		} else {
+			console.error(`web 启动失败：${e.message}`);
+		}
+		process.exit(1);
+	};
+
+	const server = serveWeb(port, { autoExit, onError: onServerError });
 	if (!noOpen) {
 		server.once("listening", () => {
 			const res = openAppWindow(`http://127.0.0.1:${server.address().port}`);

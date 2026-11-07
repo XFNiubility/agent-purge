@@ -11,7 +11,7 @@ for(const key of ['HOME','USERPROFILE','AGENT_PURGE_HOME','XDG_CONFIG_HOME','DSH
 for(const key of ['AGENT_PURGE_FORCE','AGENT_PURGE_MODE','AGENT_PURGE_PERSONA']) delete process.env[key];
 mkdirSync(root,{recursive:true});
 const {createStore}=await import('../lib/personas.mjs');const {loadState,patchState}=await import('../lib/state.mjs');
-const {applyConfiguration,changeChannel}=await import('../lib/apply.mjs');const {targets}=await import('../lib/persist.mjs');
+const {applyConfiguration,changeChannel,disableHarness}=await import('../lib/apply.mjs');const {targets}=await import('../lib/persist.mjs');
 const {reconcileArmed}=await import('../lib/armed.mjs');const store=createStore(root);
 store.save('a',{body:'PERSONA A'});store.save('b',{body:'PERSONA B'});store.setActive('a');
 const text=file=>readFileSync(file,'utf8');
@@ -46,6 +46,17 @@ test('exclusive apply lock rejects overlapping writer without altering state',()
  const previous=text(join(root,'state.json'));writeFileSync(join(root,'.apply.lock'),JSON.stringify({pid:process.pid}));
  try{assert.throws(()=>applyConfiguration(root,{persona:'a'}),/另一个配置操作/);assert.equal(text(join(root,'state.json')),previous);}finally{rmSync(join(root,'.apply.lock'));}
 });
+test('disableHarness cleans an installed block even when armed state was lost', () => {
+ const file=targets.pi.file(); mkdirSync(join(file,'..'),{recursive:true}); writeFileSync(file,'USER RULES\n');
+ assert.equal(changeChannel(root,{harness:'pi',channel:'install',enabled:true}).ok,true);
+ assert.match(text(file),/PERSONA B/);
+ patchState(root,{armed:{}});
+ const r=disableHarness(root,'pi');
+ assert.equal(r.ok,true);
+ assert.doesNotMatch(text(file),/PERSONA B/);
+ assert.match(text(file),/USER RULES/);
+ assert.ok(loadState(root).state.disabledHarnesses.includes('pi'));
+});
 test('历史能力证据不确认本次应用',()=>{
  store.save('a',{body:'PERSONA A'});store.setActive('a');patchState(root,{default:{harness:'pi',mode:'replace'},armed:{pi:['install']}});
  const verification=join(root,'verification'),report=modes=>JSON.stringify({schema:1,results:[{harness:'pi',status:'captured',modes}]});
@@ -57,4 +68,25 @@ test('历史能力证据不确认本次应用',()=>{
  r=applyConfiguration(root,{persona:'a'});assert.equal(r.results[0].runtimeConfirmed,false);assert.equal(r.runtimeConfirmed,false);
  rmSync(verification,{recursive:true,force:true});
  assert.equal(applyConfiguration(root,{persona:'a'}).runtimeConfirmed,false);
+});
+test('dsh: enabling slash cascades to install and initializes purge off; removing install cascades slash off', () => {
+ const dshHome = process.env.DSH_HOME;
+ const headless = join(dshHome, 'profiles', 'headless');
+ mkdirSync(headless, { recursive: true });
+ writeFileSync(join(headless, 'package.json'), '{}');
+ patchState(root, { default: { harness: 'dsh', mode: 'replace' }, armed: {} });
+ // 单独开启 slash 通道
+ const r = changeChannel(root, { harness: 'dsh', channel: 'slash', enabled: true });
+ assert.equal(r.ok, true);
+ const armed = loadState(root).state.armed?.dsh ?? [];
+ assert.ok(armed.includes('install'), 'slash 必须级联安装 install 常驻插件');
+ assert.ok(armed.includes('slash'), 'slash 必须被武装');
+ const runtime = loadState(root).state.dshRuntime ?? {};
+ assert.equal(runtime.headless?.enabled, false, '开启热切时默认必须处于 purge off 状态');
+ // 卸载 install 时，slash 必须一并级联卸载
+ const un = changeChannel(root, { harness: 'dsh', channel: 'install', enabled: false });
+ assert.equal(un.ok, true);
+ const armedAfter = loadState(root).state.armed?.dsh ?? [];
+ assert.equal(armedAfter.includes('install'), false);
+ assert.equal(armedAfter.includes('slash'), false);
 });

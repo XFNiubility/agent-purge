@@ -44,7 +44,7 @@ const test = base.extend({
     page.on('pageerror', error => errors.push(error.message));
     // Update checks stay offline. Everything else goes to the real isolated server.
     await page.route('**/api/update*', route => route.fulfill({
-      json: { ok: true, current: '0.2.11', latest: '0.2.11', published: false, hasUpdate: false },
+      json: { ok: true, current: '0.2.23', latest: '0.2.23', hasUpdate: false },
     }));
     await page.goto(app.url);
     await expect(page.locator('#connection')).toContainText('已连接');
@@ -74,6 +74,16 @@ test('issues #1/#6: fresh defaults save without toggling modes; legacy deep link
   expect(state.default.mode).toBe('replace');
 });
 
+test('reload twice keeps the local service alive (pagehide must not kill it)', async ({ page, app }) => {
+  // 回归：pagehide 曾经直发 /api/exit，浏览器里刷新一两次服务就没了，页面显示"本地服务未连接"。
+  for (let i = 0; i < 2; i++) {
+    await page.reload();
+    await expect(page.locator('#connection')).toContainText('已连接');
+  }
+  const response = await page.request.get(`${app.url}/api/state`);
+  expect(response.status()).toBe(200);
+});
+
 test('draft refresh, keyboard update action, unsaved navigation and metadata preservation', async ({ page, app }) => {
   await page.locator('[name=mode][value=append]').check();
   await page.locator('#refresh').click();
@@ -81,7 +91,7 @@ test('draft refresh, keyboard update action, unsaved navigation and metadata pre
   await expect(page.locator('#version-badge')).toBeEnabled();
   await page.locator('#version-badge').focus();
   await page.keyboard.press('Enter');
-  await expect(page.locator('#notice')).toContainText('尚无公开 Release');
+  await expect(page.locator('#notice')).toContainText('已是最新版本');
   await page.locator('#edit-current').click();
   await page.locator('#edit-body').fill('DRAFT <img src=x onerror=alert(1)>');
   page.once('dialog', dialog => dialog.dismiss());

@@ -30,9 +30,10 @@ const DATA = dataHome();
 // sys = 系统提示/配置文件/插件 splice；user = 只落在用户消息里（zcode 的 hook）。
 const LAYER = {
 	pi: "sys", codex: "sys", codebuddy: "sys", claude: "sys", grok: "sys",
-	omp: "sys", opencode: "sys", hermes: "sys", antigravity: "sys",
-	// zcode 只有文档说它会读 AGENTS.md，桌面版闭源、无法复核，层就不claim（UI 显示“—”+「文档」）
-	zcode: "",
+	omp: "sys", opencode: "sys", hermes: "sys", antigravity: "sys", workbuddy: "sys", "workbuddy-ai": "sys", kilo: "sys",
+	"pi-desktop": "sys",
+	// zcode 的内核 bundle 已核对：读取 ~/.zcode/AGENTS.md，且支持 customSystemPrompt
+	zcode: "sys",
 };
 const matrix = (() => {
 	try {
@@ -45,18 +46,65 @@ let store = null;
 // 同一次实测会拉起真 harness 子进程：同一家同时只能跑一份。
 const verifying = new Set();
 
-export function serveWeb(port = 7788) {
+export function serveWeb(port = 7788, opts = {}) {
+	const { autoExit = false, heartbeatTimeout = 8000, initialConnectTimeout = 30000, onExit = null, onError = null } = opts;
 	ensureDataHome(isCompiled() ? null : ROOT);
 	store ??= createStore(DATA);
+
+	const heartbeatState = {
+		lastHeartbeat: Date.now(),
+		hasConnected: false,
+	};
+
+	// gen：每次发出页面 HTML 都 +1。页面卸载时带着自己那份 gen 上报，
+	// 过期的（上一个页面）一律忽略——否则旧页面的 beacon 晚到，会把刚刷出来的新页面一起带走。
+	const ctx = { heartbeatState, autoExit, gen: 0, leaveTimer: null };
+
+	let autoExitTimer = null;
+	const shutdown = (code = 0) => {
+		clearLeave(ctx);
+		if (autoExitTimer) { clearInterval(autoExitTimer); autoExitTimer = null; }
+		const doExit = () => {
+			if (typeof onExit === "function") onExit(code);
+			else process.exit(code);
+		};
+		if (server.listening) {
+			server.close(() => doExit());
+			setTimeout(doExit, 1000).unref();
+		} else {
+			doExit();
+		}
+	};
+
+	if (autoExit) {
+		const startTime = Date.now();
+		autoExitTimer = setInterval(() => {
+			const now = Date.now();
+			if (!heartbeatState.hasConnected) {
+				if (now - startTime > initialConnectTimeout) {
+					shutdown(0);
+				}
+			} else if (now - heartbeatState.lastHeartbeat > heartbeatTimeout) {
+				shutdown(0);
+			}
+		}, 2000);
+		autoExitTimer.unref();
+	}
+
+	ctx.shutdown = shutdown;
+
 	// handle 是 async：任何异常都在这里收口，否则请求会挂着不响应
 	const server = createServer((req, res) => {
-		handle(req, res).catch((e) => {
+		handle(req, res, ctx).catch((e) => {
 			try {
 				send(res, e.statusCode ?? (/另一个配置操作|锁/.test(e.message) ? 409 : 500), { error: e.message });
 			} catch {}
 		});
 	});
-	server.on("error", (e) => {
+	server.on("error", async (e) => {
+		if (typeof onError === "function") {
+			try { await onError(e); return; } catch {}
+		}
 		// 端口被旧实例占着的时候，--detach 是静默的 → 这里必须说人话，否则用户看到的是旧 UI
 		if (e.code === "EADDRINUSE") {
 			console.error(`${port} 已被占用：老实例还在跑（可能是改动前的版本，UI 会是旧的）。`);
@@ -72,16 +120,20 @@ export function serveWeb(port = 7788) {
 	return server;
 }
 
-async function handle(req, res) {
+async function handle(req, res, ctx = {}) {
 	if (!localHost(req)) return send(res, 403, { error: "只接受本机 Host" });
 	const url = new URL(req.url, "http://127.0.0.1");
 	const p = url.pathname;
+
+	// 有请求就说明还有页面活着（刷新、重开、资源加载都算）：撤掉上一个页面留下的退出倒计时。
+	// 关键：刷新时 pagehide 先发、新页面请求随后到，这里负责把"刷新"和"关窗口"分开。
+	clearLeave(ctx);
 
 	// 防 CSRF：本机 Web 页面能 POST 就能写配置/改人设；跨站页面用 text/plain 也能发“简单请求”。
 	// 只放同源：Origin 的 host 必须和本次请求的 Host 完全一致（端口不同也挡住）。
 	if (isMutating(req.method) && !sameOrigin(req)) return send(res, 403, { error: "只接受本机同源请求" });
 
-	if (req.method === "GET" && (p === "/" || p === "/index.html")) return html(res);
+	if (req.method === "GET" && (p === "/" || p === "/index.html")) return html(res, ctx);
 	const assets = { '/app.js': 'text/javascript', '/model.mjs': 'text/javascript', '/evidence.mjs': 'text/javascript', '/styles.css': 'text/css' };
 	if (req.method === "GET" && Object.hasOwn(assets, p)) {
 		res.writeHead(200, { 'content-type': `${assets[p]}; charset=utf-8`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
@@ -112,6 +164,35 @@ async function handle(req, res) {
 			return send(res, 500, { error: `验证报告读取失败：${error.message}` });
 		}
 	}
+	if (req.method === "POST" && p === "/api/heartbeat") {
+		if (ctx.heartbeatState) {
+			ctx.heartbeatState.lastHeartbeat = Date.now();
+			ctx.heartbeatState.hasConnected = true;
+		}
+		return send(res, 200, { ok: true, now: Date.now(), autoExit: Boolean(ctx.autoExit) });
+	}
+	if (req.method === "POST" && p === "/api/exit") {
+		send(res, 200, { ok: true, message: "服务正在退出" });
+		if (typeof ctx.shutdown === "function") {
+			setTimeout(() => ctx.shutdown(0), 100);
+		} else {
+			setTimeout(() => process.exit(0), 100);
+		}
+		return;
+	}
+	if (req.method === "POST" && p === "/api/leave") {
+		// 页面卸载（刷新/关标签/关窗口）时发的信号。刷新和关窗口在浏览器里长得一样，
+		// 所以这里不立刻退：先等宽限期，新页面只要发出任何请求就会撤销（见 clearLeave）。
+		// 源码态 `agent-purge web` 归终端管，页面来去与它无关——永不自杀。
+		req.resume();
+		const gen = url.searchParams.get("gen");
+		const live = Boolean(ctx.autoExit) && gen !== null && gen === String(ctx.gen);
+		if (live) {
+			ctx.leaveTimer = setTimeout(() => { ctx.leaveTimer = null; ctx.shutdown(0); }, LEAVE_GRACE);
+			ctx.leaveTimer.unref?.();
+		}
+		return send(res, 200, { ok: true, exit: live });
+	}
 	if (req.method === "GET" && p === "/api/state") return send(res, 200, await state(url.searchParams.get("versions") === "1"));
 	if (req.method === "GET" && p === "/api/armor") return send(res, 200, armorState());
 	if (req.method === "POST" && p === "/api/apply") return send(res, 200, applyChanges(await body(req)));
@@ -136,24 +217,91 @@ async function handle(req, res) {
 		return send(res, 200, resClean);
 	}
 	if (req.method === "GET" && p === "/api/update") {
-		const { checkForUpdate, canReplaceSelf } = await import("../lib/update.mjs");
+		const { checkForUpdate, checkNpmVersion, canReplaceSelf, detectInstallType, compareSemver } = await import("../lib/update.mjs");
 		const force = url.searchParams.get("force") === "1";
 		const cacheFile = join(DATA, "update-cache.json");
-		const info = await checkForUpdate({ force, cacheFile });
+		const isExe = canReplaceSelf();
+		const installType = detectInstallType();
+
+		const [ghRes, npmRes] = await Promise.allSettled([
+			checkForUpdate({ force, cacheFile }),
+			checkNpmVersion({ timeout: 3500 })
+		]);
+		const gh = ghRes.status === "fulfilled" ? ghRes.value : { ok: false, error: ghRes.reason?.message };
+		const npm = npmRes.status === "fulfilled" ? npmRes.value : { ok: false, error: npmRes.reason?.message };
+
+		const current = gh.current || npm.current || "0.0.0";
+		let latest = gh.ok && gh.latest ? gh.latest : current;
+		if (npm.ok && npm.latest && compareSemver(latest, npm.latest) > 0) {
+			latest = npm.latest;
+		}
+		const hasUpdate = compareSemver(current, latest) > 0;
+
 		return send(res, 200, {
-			...info,
-			isExe: canReplaceSelf(),
+			ok: gh.ok || npm.ok,
+			current,
+			latest,
+			hasUpdate,
+			installType,
+			isExe,
 			execPath: process.execPath,
+			npm: {
+				ok: npm.ok,
+				latest: npm.latest,
+				hasUpdate: npm.hasUpdate,
+				error: npm.error,
+				command: "npm install -g agent-purge@latest"
+			},
+			github: {
+				ok: gh.ok,
+				latest: gh.latest,
+				hasUpdate: gh.hasUpdate,
+				body: gh.body || "",
+				htmlUrl: gh.htmlUrl,
+				assets: gh.assets || [],
+				error: gh.error
+			},
+			body: gh.body || (hasUpdate ? `发现新版本 v${latest}` : ""),
+			htmlUrl: gh.htmlUrl || "https://github.com/ZiChuanLan/agent-purge/releases/latest"
 		});
 	}
 	if (req.method === "POST" && p === "/api/update-upgrade") {
-		await body(req);
+		const reqPayload = await body(req);
 		const { checkForUpdate, downloadFile, replaceSelfExecutable, canReplaceSelf } = await import("../lib/update.mjs");
+		const isExe = canReplaceSelf();
+		const upgradeType = reqPayload?.type || (isExe ? "exe" : "npm");
+
+		if (upgradeType === "npm") {
+			const { execFile } = await import("node:child_process");
+			const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+			const args = ["install", "-g", "agent-purge@latest"];
+			return new Promise((resolve) => {
+				execFile(npmCmd, args, { timeout: 120000, windowsHide: true }, (error, stdout, stderr) => {
+					if (error) {
+						resolve(send(res, 500, {
+							ok: false,
+							type: "npm",
+							error: `npm 执行出错：${error.message}`,
+							output: (stderr || stdout || "").trim(),
+							command: "npm install -g agent-purge@latest"
+						}));
+					} else {
+						resolve(send(res, 200, {
+							ok: true,
+							type: "npm",
+							message: "npm 全局安装已更新到最新版！请重启 agent-purge 服务以生效。",
+							output: (stdout || "").trim(),
+							command: "npm install -g agent-purge@latest"
+						}));
+					}
+				});
+			});
+		}
+
 		const info = await checkForUpdate({ force: true });
 		if (!info.ok || !info.hasUpdate) {
-			return send(res, 400, { error: info.error || "暂无可用的新版本" });
+			return send(res, 400, { error: info.error || "GitHub Release 暂无可用新版本" });
 		}
-		const isExe = canReplaceSelf();
 		const targetExe = info.assets?.find((a) => a.name.toLowerCase() === "agent-purge.exe");
 		const targetSetup = info.assets?.find((a) => a.name.toLowerCase().endsWith("-setup.exe"));
 
@@ -255,6 +403,8 @@ async function state(withVersions) {
 			found: Boolean(d.found),
 			bin: d.bin ?? null,
 			home: d.home ?? null,
+			install: d.install ?? null,
+			installSource: d.installSource ?? null,
 			homeExists: Boolean(d.homeExists),
 			persistable: Boolean(inst),
 			installed: Boolean(inst?.installed),
@@ -514,10 +664,23 @@ function localHost(req) {
 			url.host === host.toLowerCase() && Number(url.port || 80) === req.socket.localPort;
 	} catch { return false; }
 }
-const html = (res) =>
-	res
+const html = (res, ctx = {}) => {
+	// 每次发页面都换一个代号：/api/leave 只认自己那一代，旧页面的 beacon 晚到也不会误伤新页面
+	const gen = String((ctx.gen = (ctx.gen ?? 0) + 1));
+	const page = readResource("web/ui.html").toString("utf8")
+		.replace('<meta name="ap-server-gen" content="">', `<meta name="ap-server-gen" content="${gen}">`);
+	return res
 		.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" })
-		.end(readResource("web/ui.html").toString("utf8"));
+		.end(page);
+};
+
+// 刷新页面时 pagehide 会先于新页面的请求到达：留一个宽限期，让"关窗口"和"刷新"各归各位。
+const LEAVE_GRACE = 1500;
+function clearLeave(ctx) {
+	if (!ctx?.leaveTimer) return;
+	clearTimeout(ctx.leaveTimer);
+	ctx.leaveTimer = null;
+}
 
 function isMutating(method) {
 	return method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
@@ -578,4 +741,7 @@ function body(req) {
 // 编译态 import.meta.url 也是 exe 路径，光比路径会把 exe 误当入口：只认 .mjs 脚本。
 const selfPath = fileURLToPath(import.meta.url);
 const isEntry = Boolean(process.argv[1]) && selfPath.endsWith(".mjs") && resolve(process.argv[1]) === selfPath;
-if (isEntry && process.argv.includes("--serve")) serveWeb(Number(process.argv[process.argv.indexOf("--serve") + 1] ?? 7788));
+if (isEntry && process.argv.includes("--serve")) {
+	const servePort = Number(process.argv[process.argv.indexOf("--serve") + 1] ?? 7788);
+	serveWeb(servePort, { autoExit: process.argv.includes("--auto-exit") });
+}
