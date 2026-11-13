@@ -20,7 +20,7 @@
   </a>
 </p>
 
-[快速开始](#快速开始) · [界面一览](#界面一览) · [人设与模式](#人设与模式) · [应用范围](#应用范围) · [支持情况](#支持情况) · [暂停与卸载](#暂停与卸载) · [免责与合规声明](#免责与合规声明)
+[文档站](https://zichuanlan.github.io/agent-purge/) · [快速开始](#快速开始) · [界面一览](#界面一览) · [人设与模式](#人设与模式) · [应用范围](#应用范围) · [支持情况](#支持情况) · [暂停与卸载](#暂停与卸载) · [免责与合规声明](#免责与合规声明)
 
 </div>
 
@@ -47,9 +47,9 @@ agent-purge web
 
 1. 在 **「人设库」** 编辑起步模板或新建人设（支持从 GitHub 仓库或本地目录批量拉取）。
 2. 回到 **「控制台」** 选择人设与默认力度、保存设置，打开目标工具开关或点开右侧详情工作区调优通道。
-3. 在 **「项目规则」** 为指定代码库写入局部规则文件（仅影响该目录，随时可无损移除）。
+3. 在 **「规则文件」** 为指定项目目录或全局配置目录追加规则块（默认在原文件末尾 append，随时可无损移除）。
 
-控制台默认监听 `http://127.0.0.1:7788`；若端口被系统保留或占用，会自动顺延至 `7890–7909` 空闲端口并打开独立桌面窗口。首次启动不会自动接管任何工具。
+控制台默认监听 `http://127.0.0.1:7788`；若端口被系统保留或占用，会自动顺延至 `7890–7909` 空闲端口并打开独立桌面窗口。桌面端是单例：重复双击只会把已打开的窗口叫到前台，不会再开第二个服务或第二个页面；关窗行为（退出/留在后台、是否需要确认）与 WebDAV 备份在「设置」页调整，改完立即生效。首次启动不会自动接管任何工具。
 
 ## 界面一览
 
@@ -57,9 +57,9 @@ agent-purge web
 
 ![agent-purge 工具详情与安全试跑](docs/images/console-detail.png)
 
-系统提示词接管在 **「控制台」**；按项目目录写入的 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `QWEN.md` / `AGENT.md` / `.clinerules` / `.roorules` 在 **「项目规则」** 页按文件统一托管。
+系统提示词接管在 **「控制台」**；项目目录及各家全局规则文件（`AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `QWEN.md` / `CRUSH.md` / `.clinerules` / `.roorules`）统一在 **「规则文件」** 页按作用范围与指定人设写入。
 
-![agent-purge 项目规则](docs/images/project-rules.png)
+![agent-purge 规则文件](docs/images/project-rules.png)
 
 [查看移动端窄屏布局](docs/images/console-mobile.png)
 
@@ -72,10 +72,15 @@ agent-purge web
 | `agent-purge-<版本>-setup.exe` | Windows，外部 Node.js 20+ | 图形安装和卸载 |
 | `agent-purge-<版本>.zip` | Windows，外部 Node.js 20+ | 解压后使用 |
 | `agent-purge.exe` | Windows x64，自带运行时 | 无需另装 Node 的独立便携版 |
+| `agent-purge-<版本>-darwin-arm64.dmg` / `x64.dmg` | macOS 12+（Apple Silicon / Intel，自带运行时） | 未签名 `.app` 磁盘镜像，拖入 `/Applications` 后首次需右键「打开」或 `xattr -cr` 放行 |
+| `agent-purge-<版本>-linux-x64` / `-linux-arm64` | 主流 Linux 发行版（自带运行时） | 单文件二进制，`chmod +x` 后直接运行 |
+| `agent-purge-<版本>-linux-<架构>.tar.gz` | 主流 Linux 发行版 | 便携包，含 `.desktop`、图标与免 root 的 `install.sh` |
+| `agent-purge-<版本>-linux-<架构>.deb` | Debian / Ubuntu 及衍生版 | `sudo apt install ./*.deb`，注册 `/usr/bin/agent-purge` 与桌面入口 |
+| `agent-purge-<版本>-linux-<架构>.AppImage` | 主流 Linux 发行版（存在时才有） | 双击或用 `--appimage-extract-and-run` 直接启动控制台 |
 
 下载附件以实际 [GitHub Releases](https://github.com/ZiChuanLan/agent-purge/releases) 为准；未发布的版本没有附件。请核对 SHA-256 和签名状态，未签名程序可能出现系统提示。ZIP 中的 EXE 是薄启动器，不是自带运行时的独立版。
 
-SSH / WSL 等无桌面环境使用 `agent-purge web --no-open`。Web 仅监听本机；Linux/macOS 使用 npm 或源码入口，不能运行 Windows EXE。平台验证范围见[兼容性说明](docs/compatibility.md)。
+SSH / WSL 等无桌面环境使用 `agent-purge web --no-open`。Web 仅监听本机；Linux 可用 npm / 源码入口或 Release 里的二进制、`.tar.gz`、`.deb`（AppImage 随 runner 能力可选生成），macOS 可用 npm / 源码或 `.dmg` 镜像（`.dmg` 未经 Apple 签名与公证）。平台验证范围见[兼容性说明](docs/reference/compatibility.md)。
 
 控制台右上角的版本角标点开就是升级入口，按安装形态自动选路：独立 EXE 下载并就地热替换、npm 全局安装调 `npm install -g`、**源码检出（`git clone` 后直接 `node bin/agent-purge.mjs`）在安装目录执行 `git pull --ff-only`**，不下载任何发布产物。源码检出的「有没有更新」按上游提交算，版本号没变也会提示；工作区有未提交改动、处于游离 HEAD 或分支没有上游时一律拒绝并说明原因。
 
@@ -120,7 +125,7 @@ description: 中文、先结论、修改前先读代码
 修改代码前先阅读现有实现；不确定时明确说明。
 ```
 
-只有正文进入提示词。`description` 用于列表说明，旧键 `desc` 仍兼容；Web 编辑会保留未涉及的元数据。高级匹配、排序与数据目录配置见[使用指南](docs/usage.md#人设文件)。
+只有正文进入提示词。`description` 用于列表说明，旧键 `desc` 仍兼容；Web 编辑会保留未涉及的元数据。高级匹配、排序与数据目录配置见[使用指南](docs/reference/cli.md#人设文件)。
 
 也可参考维护者的 [some-magic 人设仓库](https://github.com/ZiChuanLan/some-magic)。
 
@@ -157,36 +162,15 @@ agent-purge status
 **使用 magpie 网关？** 可选插件位于 `magpie-plugin/`，不是仓库根目录。安装方法和网关改写边界见 [magpie 插件说明](magpie-plugin/README.md)。
 
 ## 支持情况
+**一句话结论**：宿主提供整段 system prompt 入口的（Codex、OpenCode、DSH、Claude、Gemini CLI、Qwen、Qoder、Kimi、Kiro、CodeBuddy、Grok、omp）是真替换；Claude 与 Kilo 有残留；Antigravity、Crush、Continue、Auggie、Goose、zcode 只能追加，原生身份仍在提示词里。
 
-以下为支持范围与当前验证程度；请求级验证只覆盖表中明确说明的宿主，不是对所有版本的兼容承诺。
+逐家的接管通道、热切时机、实测字数、内置安全条款与残留说明都在文档站：
 
-| 执行器 | 已验证版本 | 同会话热切 |
-|---|---|---|
-| pi / omp | 1.4.0 / 18.14.1 | 已验证（动态扩展） |
-| OpenCode 1.x / 2.x | 1.19.5 / 2.2.5 | 已验证 |
-| DSH | 0.2.1-rc.5 | 已验证（SDK 同会话；headless/web/desktop 三形态四模式已抓） |
-| Codex / Claude Code | 0.166.0 / 2.1.316 | 启动入口已验证；热切未验证 |
-| CodeBuddy / Grok | 2.179.0 / 1.0.73 | 启动入口已验证；热切未验证 |
-| Qwen Code | 0.27.2 | `--system-prompt` / `--append-system-prompt` 参数入口已验证；请求抓包未做 |
-| Gemini CLI | 0.68.0 | `GEMINI_SYSTEM_MD` 指向人设文件，PromptProvider 替换 core system prompt；请求抓包未做 |
-| Crush | v0.100.0 | 本机实测；全局 `CRUSH.md` 是 system prompt 的追加上下文，写托管块可逆；请求抓包未做 |
+- [支持情况](https://zichuanlan.github.io/agent-purge/reference/support) —— 净化方式分级、安全条款实测、支持矩阵
+- [兼容性与已知限制](https://zichuanlan.github.io/agent-purge/reference/compatibility) —— 逐家四模式抓包结论与已知坑
+- [命令行参考](docs/reference/cli.md) —— 完整参数、人设文件格式、卸载步骤
 
-| Continue CLI | 1.5.47 | 真实安装 `@continuedev/cli`；`--rule` 追加规则/上下文，不是 core system 替换；未抓包 |
-| Qoder CLI | 1.1.87 | 真实安装 `@qoder-ai/qodercli`；`--system-prompt` / `--append-system-prompt` 两个入口已验证，未登录、未抓包 |
-| Kimi Code | 2.5.3 | 真实安装 `@moonshot-ai/kimi-code`；`--agent-file` 的 Markdown 正文作为 system prompt，未登录、未抓包 |
-| Auggie CLI | 0.37.1 | 真实安装 `@augmentcode/auggie`；`--rules` 追加规则/上下文，不是 core system 替换；未抓包 |
-| Goose | 1.59.0 | 真实下载 Windows release；`session --system` / `run --system` 追加系统指令；本机无 provider，真实 prompt 被拦 |
-| Kiro CLI | 3.2.0 | `--agent` / `--no-interactive` 参数入口已验证；自定义 agent 的 `prompt` 按官方文档作为 system prompt，未登录校验、未抓包 |
-| Kilo Code | @kilocode/cli 7.8.18 | off/strict/replace/append 四模式真实抓包；system 层 marker=1 |
-| Antigravity（App + CLI `agy`） | CLI 1.5.3 / 语言服务 1.23.x | off/strict/replace/append 四模式真实抓包；写 `~/.gemini/config/AGENTS.md`，落 system 层 `<user_rules>`；`<identity>` 段仍在，靠规则段优先级压住 |
-| WorkBuddy / WorkBuddy AI | 5.9.3 / 5.9.4 | 身份上下文已验证（国际版写 `app/app-config.json`）；热切未验证 |
-| PI-Desktop | 0.21.0（便携版） | 已实测：常驻写 `~/.pi/agent/SYSTEM.md`；热切装在 `plugins/imported` 的 imported 插件里，同一会话换人设/`/purge off` 下一轮生效 |
-
-Cursor、Devin CLI、Copilot CLI、Amp、Cline、Roo Code、Gemini CLI、Qwen Code、Crush 的规则文件已接入「项目规则」页；其中 Cursor / Devin / Copilot / Amp / Cline / Roo 只写规则，不替换主 agent 的 system prompt。Muse Code 目前没有可安装的 CLI，暂不接入。
-
-首次安装或更新插件代码后，仍需重新加载宿主。**配置写入、历史测试通过、当前会话实际生效，是不同状态。**
-
-Windows 与 WSL/Linux 已执行回归，macOS 尚待实机验证。Hermes、zcode 未计为本轮通过。请求角色、宿主残留、浏览器覆盖与已知安装问题统一记录在[兼容性与限制](docs/compatibility.md)，不以模型自称身份作为验收依据。
+请求角色、宿主残留、浏览器覆盖与已知安装问题统一记录在兼容性文档；**不以模型自称身份作为验收依据**。首次安装或更新插件代码后仍需重新加载宿主——配置写入、历史测试通过、当前会话实际生效是不同状态。Windows 与 WSL/Linux 已执行回归，macOS 尚待实机验证。
 
 ## 暂停与卸载
 
@@ -206,7 +190,7 @@ npm uninstall -g agent-purge
 
 Windows 安装器卸载也会先撤销接管并保留人设。发生恢复冲突时，保留报错指出的文件和凭据，先比较修改再处理；不要直接删除备份。历史会话中已经发送的内容无法撤回。
 
-需要永久删除数据时，先备份，再按[完整卸载说明](docs/usage.md#暂停撤销和卸载)操作；`self-uninstall --yes` 与普通卸载不同。
+需要永久删除数据时，先备份，再按[完整卸载说明](docs/reference/cli.md#暂停撤销和卸载)操作；`self-uninstall --yes` 与普通卸载不同。
 
 ## 隐私与使用边界
 
@@ -225,10 +209,10 @@ npm test
 
 | 文档 | 内容 |
 |---|---|
-| [使用指南](docs/usage.md) | 人设文件、分家配置、通道、项目规则、恢复与常见问题 |
-| [兼容性与限制](docs/compatibility.md) | 实测版本、平台范围、请求证据与已知问题 |
+| [使用指南](docs/reference/cli.md) | 人设文件、分家配置、通道、项目规则、恢复与常见问题 |
+| [兼容性与限制](docs/reference/compatibility.md) | 实测版本、平台范围、请求证据与已知问题 |
 | [参与开发](CONTRIBUTING.md) | 目录结构、测试命令与提交规范 |
-| [架构约定](docs/architecture.md) | 模块边界、配置语义和界面规范 |
+| [架构约定](docs/reference/architecture.md) | 模块边界、配置语义和界面规范 |
 | [发布流程](docs/releasing.md) | 构建、安装验收与发行检查 |
 
 回归测试保留在 `test/`，临时日志与构建产物不进入源码仓库。

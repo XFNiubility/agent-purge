@@ -16,7 +16,7 @@ const test = base.extend({
     writeFileSync(join(env.CODEX_HOME, 'config.toml'), '# user config\n');
     writeFileSync(join(env.CLAUDE_CONFIG_DIR, 'settings.json'), '{}');
     const child = spawn(process.execPath, [resolve('bin/agent-purge.mjs'), '--serve', '0'], {
-      cwd: root, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: root, env: { ...env, LANG: 'zh_CN.UTF-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     });
     const closed = new Promise(resolve => child.once('close', resolve));
     let output = '';
@@ -150,9 +150,10 @@ test('verification badges distinguish no request, process error, off success and
   await page.locator('#refresh').click();
   await expect(drawer).toContainText('请求未命中');
 });
-test('project rules page writes and removes a managed block', async ({ page, app }) => {
-  await page.getByRole('button', { name: '项目规则', exact: true }).click();
-  await expect(page.locator('#project-title')).toBeVisible();
+test('rule files page writes, identifies persona, supports global scope and removes cleanly', async ({ page, app }) => {
+  await page.getByRole('button', { name: '规则文件', exact: true }).click();
+  await expect(page.locator('#project-title')).toHaveText('规则文件');
+  await expect(page.locator('#project-scope-desc')).toContainText('append');
   const card = page.locator('.project-card').filter({ hasText: 'AGENTS.md' });
   await expect(card).toContainText('写入此项目');
   await card.locator('.project-diff summary').click();
@@ -160,20 +161,30 @@ test('project rules page writes and removes a managed block', async ({ page, app
   await page.locator('.project-coverage summary').click();
   await expect(page.locator('.project-coverage-list')).toContainText('Claude Code');
   await card.getByRole('button', { name: '写入此项目' }).click();
-  await expect(card.locator('.chip')).toHaveText('已写入');
+  await expect(card.locator('.chip')).toHaveText('已写入 · 中性模板');
   await expect(page.locator('.project-history')).toContainText('写入');
   await expect(card.locator('.project-after')).toBeVisible();
   const file = join(app.root, 'AGENTS.md');
   expect(readFileSync(file, 'utf8')).toContain('# >>> agent-purge');
   await card.getByRole('button', { name: '移除', exact: true }).click();
   await expect(card.locator('.chip')).toHaveText('未写入');
+
+  await page.locator('[name="rule-scope"][value="global"]').check();
+  const piGlobal = page.locator('.project-card').filter({ hasText: 'AGENTS.md (Pi)' });
+  await expect(piGlobal).toContainText('写入全局文件');
+  await piGlobal.getByRole('button', { name: '写入全局文件' }).click();
+  await expect(piGlobal.locator('.chip')).toHaveText('已写入 · 中性模板');
+  const globalFile = join(app.env.PI_CODING_AGENT_DIR, 'AGENTS.md');
+  expect(readFileSync(globalFile, 'utf8')).toContain('# >>> agent-purge');
+  await piGlobal.getByRole('button', { name: '移除', exact: true }).click();
+  await expect(piGlobal.locator('.chip')).toHaveText('未写入');
 });
 test('rules-only project file writes without an owner selector', async ({ page, app }) => {
-  await page.getByRole('button', { name: '项目规则', exact: true }).click();
+  await page.getByRole('button', { name: '规则文件', exact: true }).click();
   const card = page.locator('.project-card').filter({ hasText: '.clinerules' });
   await expect(card).toContainText('写入此项目');
   await card.getByRole('button', { name: '写入此项目' }).click();
-  await expect(card.locator('.chip')).toHaveText('已写入');
+  await expect(card.locator('.chip')).toHaveText('已写入 · 中性模板');
   const file = join(app.root, '.clinerules');
   expect(readFileSync(file, 'utf8')).toContain('# >>> agent-purge');
   await card.getByRole('button', { name: '移除', exact: true }).click();
@@ -183,10 +194,33 @@ test('rules-only project file writes without an owner selector', async ({ page, 
 
 
 
+test('settings: 桌面窗口偏好可保存；WebDAV 密码只回显「已保存」', async ({ page, app }) => {
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(page.locator('#page-settings')).toBeVisible();
+  // 双击 exe 才有「关窗退出」；测试里服务是终端托管的，徽标要如实说明
+  await expect(page.locator('#desktop-mode-badge')).toHaveText('终端托管');
+
+  await page.locator('#close-action').selectOption('stay');
+  await page.locator('#confirm-close').uncheck();
+  await page.getByRole('button', { name: '保存窗口设置' }).click();
+  await expect(page.locator('#desktop-status')).toContainText('已保存');
+  const state = await (await page.request.get(`${app.url}/api/state`)).json();
+  expect(state.settings.desktop.exitOnClose).toBe(false);
+  expect(state.settings.desktop.confirmOnClose).toBe(false);
+
+  await page.request.post(`${app.url}/api/settings`, { data: { webdav: { url: 'https://dav.example.com/dav/', username: 'admin', password: 's3cret' } } });
+  await page.reload();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(page.locator('#webdav-url')).toHaveValue('https://dav.example.com/dav/');
+  await expect(page.locator('#webdav-password')).toHaveValue('');
+  await expect(page.locator('#webdav-password')).toHaveAttribute('placeholder', '已保存，留空不修改');
+  await expect(page.locator('#backup-stamp')).toContainText('还没有备份过');
+});
+
 for (const width of [1440, 768, 390, 320]) {
-  test(`responsive ${width}px: no page overflow; accessible console/library/project/diagnostics`, async ({ page }, testInfo) => {
+  test(`responsive ${width}px: no page overflow; accessible console/library/project/diagnostics/settings`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
-    for (const [name, route] of [['控制台', 'console'], ['人设库', 'library'], ['项目规则', 'project'], ['测试与记录', 'diagnostics']]) {
+    for (const [name, route] of [['控制台', 'console'], ['人设库', 'library'], ['规则文件', 'project'], ['测试与记录', 'diagnostics'], ['设置', 'settings']]) {
       await page.getByRole('button', { name, exact: true }).click();
       if (route === 'library') await page.getByRole('button', { name: /中性模板/ }).click();
       await expect(page.locator(`#page-${route}`)).toBeVisible();
@@ -200,3 +234,51 @@ for (const width of [1440, 768, 390, 320]) {
     }
   });
 }
+
+test('i18n: non-Chinese locale defaults to English and can switch language in Settings', async ({ page }) => {
+  const root = mkdtempSync(join(tmpdir(), 'ap-browser-en-'));
+  const env = { ...isolatedEnv(root), PATH: '', Path: '', LANG: 'en_US.UTF-8' };
+  mkdirSync(join(env.PI_CODING_AGENT_DIR, 'extensions'));
+  const child = spawn(process.execPath, [resolve('bin/agent-purge.mjs'), '--serve', '0'], {
+    cwd: root, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const closed = new Promise(resolve => child.once('close', resolve));
+  let output = '';
+  try {
+    const url = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Server timeout: ${output}`)), 15000);
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.once('exit', code => { clearTimeout(timer); reject(new Error(`Server exited ${code}: ${output}`)); });
+      child.stderr.on('data', data => { output += data; });
+      child.stdout.on('data', data => {
+        output += data;
+        const match = output.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (match) { clearTimeout(timer); resolve(match[0]); }
+      });
+    });
+    await page.route('**/api/update*', route => route.fulfill({
+      json: { ok: true, current: '0.2.30', latest: '0.2.30', hasUpdate: false },
+    }));
+    await page.goto(url);
+    await expect(page.locator('#connection')).toContainText('Connected');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect(page.locator('#console-title')).toHaveText('Managed Targets');
+    await expect(page.locator('#apply')).toHaveText('Save Settings');
+
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.locator('#language-select')).toHaveValue('auto');
+    await page.locator('#language-select').selectOption('zh-CN');
+    await page.locator('#save-language').click();
+    await expect(page.locator('#language-status')).toContainText('已更新');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    await expect(page.getByRole('button', { name: '控制台', exact: true })).toBeVisible();
+
+    await page.reload();
+    await expect(page.locator('#connection')).toContainText('已连接');
+    await expect(page.locator('#console-title')).toHaveText('接管范围');
+  } finally {
+    if (child.exitCode === null) child.kill();
+    await closed;
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
